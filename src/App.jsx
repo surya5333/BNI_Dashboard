@@ -31,6 +31,7 @@ const STORAGE_KEYS = {
   visitors: 'bni-dashboard-visitors-v2',
   fridayMode: 'bni-dashboard-friday-mode-session',
   paymentFilter: 'bni-dashboard-payment-filter-session',
+  paymentStatus: 'bni-dashboard-payment-status-session',
 }
 
 function safeJsonRead(key, fallback, storage = window.localStorage) {
@@ -209,6 +210,14 @@ const css = `
   .segment.active { background: #1f5f9f; color: #ffffff; }
   .status-note { align-self: center; color: #627083; font-size: 0.88rem; font-weight: 700; padding: 9px 0; }
 
+  .quick-actions { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .summary-card { background: #ffffff; border: 1px solid #d9e0ea; border-radius: 10px; padding: 16px; box-shadow: 0 8px 28px rgba(23, 32, 51, 0.05); }
+  .summary-label { color: #627083; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.04em; text-transform: uppercase; }
+  .summary-value { margin-top: 8px; color: #172033; font-size: clamp(1.35rem, 2vw, 1.85rem); font-weight: 900; line-height: 1.1; }
+  .summary-value.success { color: #166534; }
+  .summary-value.warning { color: #991b1b; }
+
   .panel { background: #ffffff; border: 1px solid #d9e0ea; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 8px 28px rgba(23, 32, 51, 0.05); }
   .rent-panel { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .panel-title { margin: 0; font-size: 1rem; font-weight: 850; color: #172033; }
@@ -274,6 +283,9 @@ const css = `
     .segmented { width: 100%; }
     .segment { flex: 1; }
     .toolbar .control { min-width: calc(50% - 8px); }
+    .summary-grid { grid-template-columns: 1fr; }
+    .quick-actions { width: 100%; }
+    .quick-actions .muted-btn { flex: 1; }
   }
 `
 
@@ -296,6 +308,9 @@ export default function App() {
   })
   const [paymentFilter, setPaymentFilter] = useState(() => {
     return safeJsonRead(STORAGE_KEYS.paymentFilter, 'all', window.sessionStorage)
+  })
+  const [paymentStatus, setPaymentStatus] = useState(() => {
+    return safeJsonRead(STORAGE_KEYS.paymentStatus, 'all', window.sessionStorage)
   })
 
   const [newMemberName, setNewMemberName] = useState('')
@@ -330,6 +345,10 @@ export default function App() {
   useEffect(() => {
     sessionStorage.setItem(STORAGE_KEYS.paymentFilter, JSON.stringify(paymentFilter))
   }, [paymentFilter])
+
+  useEffect(() => {
+    sessionStorage.setItem(STORAGE_KEYS.paymentStatus, JSON.stringify(paymentStatus))
+  }, [paymentStatus])
 
   const getMonthDataFor = useCallback((targetYear, targetMonth) => {
     const fridayCount = getFridays(targetYear, targetMonth).length
@@ -414,15 +433,6 @@ export default function App() {
       ?? initFriday('present', 'weekly', getFridays(friday.year, friday.month).length)
   }
 
-  const displayedMemberIndexes = useMemo(() => {
-    return members
-      .map((_, index) => index)
-      .filter((index) => {
-        if (paymentFilter === 'all') return true
-        return contextMonthData.members[index]?.payMode === paymentFilter
-      })
-  }, [members, paymentFilter, contextMonthData])
-
   const rowTotals = useMemo(() => {
     return members.map((_, memberIndex) => {
       return visibleFridays.reduce((total, friday) => {
@@ -440,6 +450,65 @@ export default function App() {
       }, 0)
     })
   }, [members, visibleFridays, allData])
+
+  const memberPaymentSummaries = useMemo(() => {
+    return members.map((_, memberIndex) => {
+      const entries = visibleFridays.map((friday) => getFridayEntry(memberIndex, friday))
+      const totalAmount = entries.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)
+      const collectedAmount = entries.reduce((sum, entry) => {
+        return sum + (entry.paid ? Number(entry.amount) || 0 : 0)
+      }, 0)
+      const outstandingAmount = Math.max(0, totalAmount - collectedAmount)
+      const hasEntries = entries.length > 0
+      const isPaid = hasEntries && entries.every((entry) => entry.paid)
+      const isUnpaid = !isPaid
+
+      return {
+        totalAmount,
+        collectedAmount,
+        outstandingAmount,
+        isPaid,
+        isUnpaid,
+      }
+    })
+  }, [members, visibleFridays, allData])
+
+  const displayedMemberIndexes = useMemo(() => {
+    return members
+      .map((_, index) => index)
+      .filter((index) => {
+        const typeMatches = paymentFilter === 'all' || contextMonthData.members[index]?.payMode === paymentFilter
+        const statusMatches = paymentStatus === 'all'
+          || (paymentStatus === 'paid' && memberPaymentSummaries[index]?.isPaid)
+          || (paymentStatus === 'unpaid' && memberPaymentSummaries[index]?.isUnpaid)
+        return typeMatches && statusMatches
+      })
+  }, [members, paymentFilter, paymentStatus, contextMonthData, memberPaymentSummaries])
+
+  const visitorCollectedTotal = visitors.reduce((sum, visitor) => {
+    return sum + (visitor.paid ? Number(visitor.amount) || 0 : 0)
+  }, 0)
+  const visitorOutstandingTotal = visitors.reduce((sum, visitor) => {
+    return sum + (!visitor.paid ? Number(visitor.amount) || 0 : 0)
+  }, 0)
+
+  const summaryStats = useMemo(() => {
+    const totalMembersPaid = memberPaymentSummaries.filter((summary) => summary.isPaid).length
+    const totalMembersUnpaid = memberPaymentSummaries.filter((summary) => summary.isUnpaid).length
+    const totalAmountCollected = memberPaymentSummaries.reduce((sum, summary) => {
+      return sum + summary.collectedAmount
+    }, 0) + visitorCollectedTotal
+    const outstandingAmount = memberPaymentSummaries.reduce((sum, summary) => {
+      return sum + summary.outstandingAmount
+    }, 0) + visitorOutstandingTotal
+
+    return {
+      totalMembersPaid,
+      totalMembersUnpaid,
+      totalAmountCollected,
+      outstandingAmount,
+    }
+  }, [memberPaymentSummaries, visitorCollectedTotal, visitorOutstandingTotal])
 
   const visibleGrandTotal = displayedMemberIndexes.reduce((sum, index) => sum + rowTotals[index], 0)
   const visiblePaidTotal = displayedMemberIndexes.reduce((sum, index) => sum + rowPaidTotals[index], 0)
@@ -693,6 +762,8 @@ export default function App() {
               visibleFridays={visibleFridays}
               fridayMode={fridayMode}
               paymentFilter={paymentFilter}
+              paymentStatus={paymentStatus}
+              summaryStats={summaryStats}
               displayedMemberIndexes={displayedMemberIndexes}
               rowTotals={rowTotals}
               rowPaidTotals={rowPaidTotals}
@@ -703,6 +774,7 @@ export default function App() {
               setMonth={setMonth}
               setFridayMode={setFridayMode}
               setPaymentFilter={setPaymentFilter}
+              setPaymentStatus={setPaymentStatus}
               updatePayMode={updatePayMode}
               updateFridayField={updateFridayField}
               updateRent={updateRent}
@@ -759,6 +831,8 @@ function DashboardPage(props) {
     visibleFridays,
     fridayMode,
     paymentFilter,
+    paymentStatus,
+    summaryStats,
     displayedMemberIndexes,
     rowTotals,
     rowPaidTotals,
@@ -769,6 +843,7 @@ function DashboardPage(props) {
     setMonth,
     setFridayMode,
     setPaymentFilter,
+    setPaymentStatus,
     updatePayMode,
     updateFridayField,
     updateRent,
@@ -822,10 +897,41 @@ function DashboardPage(props) {
             <option value="monthly">Monthly</option>
           </select>
         </div>
+        <div className="control compact">
+          <span className="form-label">Payment Status</span>
+          <select className="select" value={paymentStatus} onChange={(event) => setPaymentStatus(event.target.value)}>
+            <option value="all">All</option>
+            <option value="paid">Paid</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+        </div>
+        <div className="quick-actions" aria-label="Quick payment filters">
+          <button className="muted-btn" onClick={() => setPaymentStatus('paid')}>View Paid Members</button>
+          <button className="muted-btn" onClick={() => setPaymentStatus('unpaid')}>View Unpaid Members</button>
+        </div>
         <button className="primary-btn" onClick={exportExcel}>Download Excel</button>
         <span className="status-note">
           Showing {visibleFridays.map((friday) => fmtDate(friday.date)).join(', ')}
         </span>
+      </section>
+
+      <section className="summary-grid" aria-label="Payment summary">
+        <div className="summary-card">
+          <div className="summary-label">Total Members Paid</div>
+          <div className="summary-value success">{summaryStats.totalMembersPaid}</div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Total Amount Collected</div>
+          <div className="summary-value success">₹{summaryStats.totalAmountCollected.toLocaleString('en-IN')}</div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Total Members Unpaid</div>
+          <div className="summary-value warning">{summaryStats.totalMembersUnpaid}</div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Outstanding Amount</div>
+          <div className="summary-value warning">₹{summaryStats.outstandingAmount.toLocaleString('en-IN')}</div>
+        </div>
       </section>
 
       <section className="panel rent-panel">
@@ -895,7 +1001,7 @@ function DashboardPage(props) {
             {displayedMemberIndexes.length === 0 && (
               <tr>
                 <td colSpan={5 + visibleFridays.length * 3} className="empty-state">
-                  No members match the selected payment type.
+                  No members match the selected filters.
                 </td>
               </tr>
             )}
