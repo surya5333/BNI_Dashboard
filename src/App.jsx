@@ -1243,9 +1243,9 @@ function DashboardPage(props) {
               <th rowSpan={2}>#</th>
               <th className="name-head" rowSpan={2}>Member Name</th>
               <th rowSpan={2}>Pay Mode</th>
-              {visibleFridays.map((friday, index) => (
+              {visibleFridays.map((friday) => (
                 <th key={`${friday.year}-${friday.month}-${friday.index}`} colSpan={3}>
-                  Friday {index + 1}<br />
+                  Friday {friday.index + 1}<br />
                   <span style={{ fontWeight: 600, fontSize: '0.74rem' }}>{fmtDate(friday.date)}</span>
                 </th>
               ))}
