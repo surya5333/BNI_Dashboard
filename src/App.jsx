@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import React, { Fragment, useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import QR_BASE64 from './qrData.js'
 
@@ -32,6 +32,7 @@ const STORAGE_KEYS = {
   fridayMode: 'bni-dashboard-friday-mode-session',
   paymentFilter: 'bni-dashboard-payment-filter-session',
   paymentStatus: 'bni-dashboard-payment-status-session',
+  expenses: 'bni-dashboard-expenses-v1',
 }
 
 function safeJsonRead(key, fallback, storage = window.localStorage) {
@@ -96,17 +97,34 @@ function fmtDate(date) {
   return `${date.getDate()} ${MONTHS[date.getMonth()].slice(0, 3)} ${date.getFullYear()}`
 }
 
-function calcAmount(status, payMode, totalFridays) {
-  if (status === 'absent') return 1200
-  if (status === 'substitute') return 1000
-  if (payMode === 'weekly') return 800
-  return totalFridays >= 5 ? 4300 : 3000
+function calcAmount(status, payMode, totalFridays , fridayIndex) {
+  // Weekly members unchanged
+  if (payMode === 'weekly') {
+    if (status === 'absent') return 1200
+    if (status === 'substitute') return 1000
+    return 800
+  }
+
+  // Monthly members
+  const baseFee = totalFridays >= 5 ? 4300 : 3000
+
+  // First Friday
+  if (fridayIndex === 0) {
+    if (status === 'absent') return baseFee + 400
+    if (status === 'substitute') return baseFee + 200
+    return baseFee
+  }
+
+  // Remaining FridaysS
+  if (status === 'absent') return 400
+  if (status === 'substitute') return 200
+  return 0
 }
 
-function initFriday(status = 'present', payMode = 'weekly', totalFridays = 4) {
+function initFriday(status = 'present', payMode = 'weekly', totalFridays = 4, fridayIndex = 0) {
   return {
     status,
-    amount: calcAmount(status, payMode, totalFridays),
+    amount: calcAmount(status, payMode, totalFridays, fridayIndex),
     payMethod: 'cash',
     paid: false,
   }
@@ -115,7 +133,7 @@ function initFriday(status = 'present', payMode = 'weekly', totalFridays = 4) {
 function initMemberRow(fridayCount) {
   return {
     payMode: 'weekly',
-    fridays: Array.from({ length: fridayCount }, () => initFriday('present', 'weekly', fridayCount)),
+    fridays: Array.from({ length: fridayCount }, (_, index) => initFriday('present', 'weekly', fridayCount, index)),
   }
 }
 
@@ -123,10 +141,10 @@ function normalizeMemberRow(row, fridayCount) {
   const payMode = row?.payMode === 'monthly' ? 'monthly' : 'weekly'
   const fridays = Array.from({ length: fridayCount }, (_, index) => {
     const existing = row?.fridays?.[index]
-    if (!existing) return initFriday('present', payMode, fridayCount)
+    if (!existing) return initFriday('present', payMode, fridayCount, index)
     return {
       status: existing.status && STATUS_CONFIG[existing.status] ? existing.status : 'present',
-      amount: Number(existing.amount) || calcAmount(existing.status, payMode, fridayCount),
+      amount: Number(existing.amount) || calcAmount(existing.status, payMode, fridayCount,index),
       payMethod: existing.payMethod === 'upi' ? 'upi' : 'cash',
       paid: Boolean(existing.paid),
     }
@@ -233,7 +251,7 @@ const css = `
   .legend-item { display: inline-flex; gap: 6px; align-items: center; }
   .legend-dot { width: 10px; height: 10px; border-radius: 99px; display: inline-block; }
 
-  .table-wrap { overflow: auto; max-height: 66vh; background: #ffffff; border: 1px solid #d9e0ea; border-radius: 10px; box-shadow: 0 14px 38px rgba(23, 32, 51, 0.08); }
+  .table-wrap { overflow-x: auto; background: #ffffff; border: 1px solid #d9e0ea; border-radius: 10px; box-shadow: 0 14px 38px rgba(23, 32, 51, 0.08); }
   table { width: 100%; min-width: max-content; border-collapse: separate; border-spacing: 0; font-size: 0.84rem; }
   th, td { border-right: 1px solid #e4eaf2; border-bottom: 1px solid #e4eaf2; padding: 9px 8px; text-align: center; vertical-align: middle; }
   thead th { position: sticky; z-index: 10; top: 0; background: #172033; color: #ffffff; font-weight: 850; white-space: nowrap; }
@@ -320,11 +338,40 @@ export default function App() {
 
   const [visitorForm, setVisitorForm] = useState({
     name: '',
+    friday: '',
+    referredBy: '',
     amount: 300,
     paymentMethod: 'cash',
     paid: false,
   })
   const [visitorError, setVisitorError] = useState('')
+
+  const [expenses, setExpenses] = useState(() => safeJsonRead(STORAGE_KEYS.expenses, {}))
+
+  const getExpensesFor = (targetYear, targetMonth) => {
+    return {
+      weeklyRent: expenses?.[targetYear]?.[targetMonth]?.weeklyRent ?? 0,
+      notablePrizes: expenses?.[targetYear]?.[targetMonth]?.notablePrizes ?? 0,
+      rosterSheet: expenses?.[targetYear]?.[targetMonth]?.rosterSheet ?? 0,
+    }
+  }
+
+  const setExpensesFor = (targetYear, targetMonth, newExpenses) => {
+    setExpenses((prev) => ({
+      ...prev,
+      [targetYear]: {
+        ...(prev?.[targetYear] ?? {}),
+        [targetMonth]: {
+          ...(prev?.[targetYear]?.[targetMonth] ?? {}),
+          ...newExpenses,
+        },
+      },
+    }))
+  }
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses))
+  }, [expenses])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.members, JSON.stringify(members))
@@ -349,6 +396,36 @@ export default function App() {
   useEffect(() => {
     sessionStorage.setItem(STORAGE_KEYS.paymentStatus, JSON.stringify(paymentStatus))
   }, [paymentStatus])
+
+  // Auto-select Friday for visitor form
+  useEffect(() => {
+    const today = startOfDay(new Date())
+    let selectedFriday = null
+
+    // Check current month first
+    let currentFridays = getFridays(year, month)
+    for (const friday of currentFridays) {
+      const fri = startOfDay(friday)
+      if (fri >= today) {
+        selectedFriday = fri
+        break
+      }
+    }
+
+    // If no Fridays left in current month, check next month
+    if (!selectedFriday) {
+      let nextMonth = month === 11 ? 0 : month + 1
+      let nextYear = month === 11 ? year + 1 : year
+      const nextMonthFridays = getFridays(nextYear, nextYear)
+      if (nextMonthFridays.length > 0) {
+        selectedFriday = startOfDay(nextMonthFridays[0])
+      }
+    }
+
+    if (selectedFriday) {
+      setVisitorForm((prev) => ({ ...prev, friday: selectedFriday.toISOString() }))
+    }
+  }, [year, month])
 
   const getMonthDataFor = useCallback((targetYear, targetMonth) => {
     const fridayCount = getFridays(targetYear, targetMonth).length
@@ -393,9 +470,9 @@ export default function App() {
     setMonthDataFor(contextMeta.year, contextMeta.month, (prev) => {
       const membersRows = prev.members.map((row, index) => {
         if (index !== memberIndex) return row
-        const updatedFridays = row.fridays.map((friday) => ({
+        const updatedFridays = row.fridays.map((friday, fridayIndex) => ({
           ...friday,
-          amount: calcAmount(friday.status, mode, row.fridays.length),
+          amount: calcAmount(friday.status, mode, row.fridays.length, fridayIndex),
         }))
         return { ...row, payMode: mode, fridays: updatedFridays }
       })
@@ -411,7 +488,7 @@ export default function App() {
           if (fridayIndex !== friday.index) return entry
           const updated = { ...entry, [field]: value }
           if (field === 'status') {
-            updated.amount = calcAmount(value, row.payMode, row.fridays.length)
+            updated.amount = calcAmount(value, row.payMode, row.fridays.length, fridayIndex)
           }
           return updated
         })
@@ -430,7 +507,7 @@ export default function App() {
 
   const getFridayEntry = (memberIndex, friday) => {
     return getMonthDataFor(friday.year, friday.month).members[memberIndex]?.fridays[friday.index]
-      ?? initFriday('present', 'weekly', getFridays(friday.year, friday.month).length)
+      ?? initFriday('present', 'weekly', getFridays(friday.year, friday.month).length, friday.index)
   }
 
   const rowTotals = useMemo(() => {
@@ -495,20 +572,36 @@ export default function App() {
   const summaryStats = useMemo(() => {
     const totalMembersPaid = memberPaymentSummaries.filter((summary) => summary.isPaid).length
     const totalMembersUnpaid = memberPaymentSummaries.filter((summary) => summary.isUnpaid).length
-    const totalAmountCollected = memberPaymentSummaries.reduce((sum, summary) => {
+    const memberCollection = memberPaymentSummaries.reduce((sum, summary) => {
       return sum + summary.collectedAmount
-    }, 0) + visitorCollectedTotal
+    }, 0)
+    const visitorCollection = visitorCollectedTotal
+    const totalAmountCollected = memberCollection + visitorCollection
     const outstandingAmount = memberPaymentSummaries.reduce((sum, summary) => {
       return sum + summary.outstandingAmount
     }, 0) + visitorOutstandingTotal
+
+    // Grand Total Payable: sum of all members' totalAmount
+    const grandTotalPayable = memberPaymentSummaries.reduce((sum, summary) => {
+      return sum + summary.totalAmount
+    }, 0)
+
+    const currentExpenses = getExpensesFor(year, month)
+    const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
+    const netCollection = Math.max(0, grandTotalPayable - totalExpenses)
 
     return {
       totalMembersPaid,
       totalMembersUnpaid,
       totalAmountCollected,
       outstandingAmount,
+      memberCollection,
+      visitorCollection,
+      grandTotalPayable,
+      totalExpenses,
+      netCollection,
     }
-  }, [memberPaymentSummaries, visitorCollectedTotal, visitorOutstandingTotal])
+  }, [memberPaymentSummaries, visitorCollectedTotal, visitorOutstandingTotal, year, month, expenses])
 
   const visibleGrandTotal = displayedMemberIndexes.reduce((sum, index) => sum + rowTotals[index], 0)
   const visiblePaidTotal = displayedMemberIndexes.reduce((sum, index) => sum + rowPaidTotals[index], 0)
@@ -522,8 +615,8 @@ export default function App() {
       row1.push(`Friday ${index + 1} (${fmtDate(friday.date)})`, '', '', '')
       row2.push('Attendance', 'Amount (Rs.)', 'Payment Method', 'Paid')
     })
-    row1.push('Total Payable (Rs.)', 'Total Paid (Rs.)')
-    row2.push('', '')
+    row1.push('Total Payable (Rs.)', 'Due (Rs.)', 'Total Paid (Rs.)')
+    row2.push('', '', '')
 
     const rows = [row1, row2]
     let grandPayable = 0
@@ -550,11 +643,12 @@ export default function App() {
 
       grandPayable += totalPayable
       grandPaid += totalPaid
-      row.push(totalPayable, totalPaid)
+      const due = Math.max(0, totalPayable - totalPaid)
+      row.push(totalPayable, due, totalPaid)
       rows.push(row)
     })
 
-    rows.push(['', 'GRAND TOTAL', '', ...visibleFridays.flatMap(() => ['', '', '', '']), grandPayable, grandPaid])
+    rows.push(['', 'GRAND TOTAL', '', ...visibleFridays.flatMap(() => ['', '', '', '']), grandPayable, Math.max(0, grandPayable - grandPaid), grandPaid])
     rows.push([])
     rows.push([
       'VENUE RENT',
@@ -565,13 +659,15 @@ export default function App() {
       monthData.rent.status === 'paid' ? 'Paid' : 'Not Paid',
     ])
 
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    ws['!cols'] = [
+    // Sheet 1: Dashboard
+    const dashboardWs = XLSX.utils.aoa_to_sheet(rows)
+    dashboardWs['!cols'] = [
       { wch: 4 },
       { wch: 28 },
       { wch: 12 },
       ...visibleFridays.flatMap(() => [{ wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 10 }]),
       { wch: 18 },
+      { wch: 14 },
       { wch: 16 },
     ]
     const merges = [
@@ -583,9 +679,142 @@ export default function App() {
       const c = 3 + index * 4
       merges.push({ s: { r: 0, c }, e: { r: 0, c: c + 3 } })
     })
-    ws['!merges'] = merges
-    XLSX.utils.book_append_sheet(wb, ws, `${MONTHS[month].slice(0, 3)} ${year}`)
-    XLSX.writeFile(wb, `BNI_Amigos_${MONTHS[month]}_${year}.xlsx`)
+    dashboardWs['!merges'] = merges
+    XLSX.utils.book_append_sheet(wb, dashboardWs, 'Dashboard')
+
+    // Sheet 2: Visitors (filtered for current month/year)
+    const visitorRows = [
+      ['Visitor Name', 'Friday', 'Referred By', 'Amount', 'Payment Method', 'Paid Status'],
+    ]
+    const filteredVisitors = visitors.filter((visitor) => {
+      if (!visitor.friday) return false
+      const d = new Date(visitor.friday)
+      return d.getFullYear() === year && d.getMonth() === month
+    })
+    filteredVisitors.forEach((visitor) => {
+      const visitorFriday = visitor.friday ? fmtDate(new Date(visitor.friday)) : ''
+      visitorRows.push([
+        visitor.name,
+        visitorFriday,
+        visitor.referredBy || '',
+        Number(visitor.amount) || 0,
+        visitor.paymentMethod?.toUpperCase() || '',
+        visitor.paid ? 'Paid' : 'Unpaid',
+      ])
+    })
+    const visitorWs = XLSX.utils.aoa_to_sheet(visitorRows)
+    visitorWs['!cols'] = [
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 12 },
+    ]
+    XLSX.utils.book_append_sheet(wb, visitorWs, 'Visitors')
+
+    // Sheet 3: Expenses
+    const currentExpenses = getExpensesFor(year, month)
+    const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
+    const netCollection = Math.max(0, summaryStats.grandTotalPayable - totalExpenses)
+
+    const expensesRows = [
+      ['Year', 'Month', 'Grand Total Payable', 'Weekly Rent', 'Notable Prizes', 'Roster Sheet', 'Total Expenses', 'Net Collection'],
+      [
+        year,
+        MONTHS[month],
+        summaryStats.grandTotalPayable,
+        currentExpenses.weeklyRent,
+        currentExpenses.notablePrizes,
+        currentExpenses.rosterSheet,
+        totalExpenses,
+        netCollection,
+      ],
+    ]
+    const expensesWs = XLSX.utils.aoa_to_sheet(expensesRows)
+    expensesWs['!cols'] = [
+      { wch: 8 },
+      { wch: 12 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 16 },
+    ]
+    XLSX.utils.book_append_sheet(wb, expensesWs, 'Expenses')
+
+    // Download master report
+    XLSX.writeFile(wb, `BNI_Master_Report_${MONTHS[month]}_${year}.xlsx`)
+  }
+
+  const exportVisitorsExcel = () => {
+    // Filter visitors for the selected month and year
+    const filteredVisitors = visitors.filter((visitor) => {
+      if (!visitor.friday) return false
+      const d = new Date(visitor.friday)
+      return d.getFullYear() === year && d.getMonth() === month
+    })
+
+    const wb = XLSX.utils.book_new()
+    const rows = [
+      ['Visitor Name', 'Friday', 'Referred By', 'Amount', 'Payment Method', 'Paid Status'],
+      ...filteredVisitors.map((visitor) => [
+        visitor.name,
+        visitor.friday ? fmtDate(new Date(visitor.friday)) : '',
+        visitor.referredBy || '',
+        Number(visitor.amount) || 0,
+        visitor.paymentMethod?.toUpperCase() || '',
+        visitor.paid ? 'Paid' : 'Unpaid',
+      ]),
+    ]
+
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = [
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 12 },
+    ]
+    XLSX.utils.book_append_sheet(wb, ws, 'Visitors')
+    XLSX.writeFile(wb, `BNI_Visitors_${MONTHS[month]}_${year}.xlsx`)
+  }
+
+  const exportExpensesExcel = () => {
+    const currentExpenses = getExpensesFor(year, month)
+    const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
+    const netCollection = Math.max(0, summaryStats.grandTotalPayable - totalExpenses)
+
+    const wb = XLSX.utils.book_new()
+    const rows = [
+      ['Year', 'Month', 'Grand Total Payable', 'Weekly Rent', 'Notable Prizes', 'Roster Sheet', 'Total Expenses', 'Net Collection'],
+      [
+        year,
+        MONTHS[month],
+        summaryStats.grandTotalPayable,
+        currentExpenses.weeklyRent,
+        currentExpenses.notablePrizes,
+        currentExpenses.rosterSheet,
+        totalExpenses,
+        netCollection,
+      ],
+    ]
+
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = [
+      { wch: 8 },
+      { wch: 12 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 16 },
+    ]
+    XLSX.utils.book_append_sheet(wb, ws, 'Expenses')
+    XLSX.writeFile(wb, `BNI_Expenses_${MONTHS[month]}_${year}.xlsx`)
   }
 
   const addMember = () => {
@@ -646,8 +875,8 @@ export default function App() {
 
   const addVisitor = () => {
     const name = visitorForm.name.trim()
-    if (!name) {
-      setVisitorError('Enter a visitor name.')
+    if (!name || !visitorForm.friday || !visitorForm.referredBy) {
+      setVisitorError('Please enter visitor name, select Friday, and select referring member.')
       return
     }
     setVisitors((prev) => [
@@ -655,12 +884,14 @@ export default function App() {
       {
         id: makeId(),
         name,
+        friday: visitorForm.friday,
+        referredBy: visitorForm.referredBy,
         amount: Number(visitorForm.amount) || 300,
         paymentMethod: visitorForm.paymentMethod === 'upi' ? 'upi' : 'cash',
         paid: Boolean(visitorForm.paid),
       },
     ])
-    setVisitorForm({ name: '', amount: 300, paymentMethod: 'cash', paid: false })
+    setVisitorForm({ name: '', friday: visitorForm.friday, referredBy: '', amount: 300, paymentMethod: 'cash', paid: false })
     setVisitorError('')
   }
 
@@ -736,6 +967,9 @@ export default function App() {
             <button className={`nav-btn ${page === 'visitors' ? 'active' : ''}`} onClick={() => setPage('visitors')}>
               Visitors
             </button>
+            <button className={`nav-btn ${page === 'expenses' ? 'active' : ''}`} onClick={() => setPage('expenses')}>
+              Expenses
+            </button>
             <button
               className="ghost-btn"
               onClick={() => {
@@ -805,6 +1039,9 @@ export default function App() {
 
           {page === 'visitors' && (
             <VisitorsPage
+              year={year}
+              month={month}
+              members={members}
               visitors={visitors}
               visitorForm={visitorForm}
               visitorError={visitorError}
@@ -812,6 +1049,21 @@ export default function App() {
               addVisitor={addVisitor}
               updateVisitor={updateVisitor}
               removeVisitor={removeVisitor}
+              exportVisitorsExcel={exportVisitorsExcel}
+            />
+          )}
+
+          {page === 'expenses' && (
+            <ExpensesPage
+              year={year}
+              month={month}
+              years={years}
+              setYear={setYear}
+              setMonth={setMonth}
+              grandTotalPayable={summaryStats.grandTotalPayable}
+              getExpensesFor={getExpensesFor}
+              setExpensesFor={setExpensesFor}
+              exportExpensesExcel={exportExpensesExcel}
             />
           )}
         </main>
@@ -921,17 +1173,28 @@ function DashboardPage(props) {
           <div className="summary-value success">{summaryStats.totalMembersPaid}</div>
         </div>
         <div className="summary-card">
-          <div className="summary-label">Total Amount Collected</div>
-          <div className="summary-value success">₹{summaryStats.totalAmountCollected.toLocaleString('en-IN')}</div>
+          <div className="summary-label">Members Collection</div>
+          <div className="summary-value success">₹{summaryStats.memberCollection.toLocaleString('en-IN')}</div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Net Collection</div>
+          <div className="summary-value success">₹{summaryStats.netCollection.toLocaleString('en-IN')}</div>
+        </div>
+        
+        
+        <div className="summary-card">
+          <div className="summary-label">Outstanding Amount(Remaining Amount)</div>
+          <div className="summary-value warning">₹{summaryStats.outstandingAmount.toLocaleString('en-IN')}</div>
         </div>
         <div className="summary-card">
           <div className="summary-label">Total Members Unpaid</div>
           <div className="summary-value warning">{summaryStats.totalMembersUnpaid}</div>
         </div>
         <div className="summary-card">
-          <div className="summary-label">Outstanding Amount</div>
-          <div className="summary-value warning">₹{summaryStats.outstandingAmount.toLocaleString('en-IN')}</div>
+          <div className="summary-label">Visitors Collection</div>
+          <div className="summary-value success">₹{summaryStats.visitorCollection.toLocaleString('en-IN')}</div>
         </div>
+        
       </section>
 
       <section className="panel rent-panel">
@@ -966,9 +1229,9 @@ function DashboardPage(props) {
 
       <section className="panel legend" aria-label="Payment rules">
         <strong>Rules:</strong>
-        <span className="legend-item"><span className="legend-dot" style={{ background: '#166534' }} /> Present: Weekly Rs. 800, Monthly Rs. 3000 or Rs. 4300 for 5 Fridays</span>
-        <span className="legend-item"><span className="legend-dot" style={{ background: '#991b1b' }} /> Absent: Rs. 1200</span>
-        <span className="legend-item"><span className="legend-dot" style={{ background: '#92400e' }} /> Substitute: Rs. 1000</span>
+        <span className="legend-item"><span className="legend-dot" style={{ background: '#166534' }} /> Weekly: Present ₹800, Monthly: Present ₹0 (except Friday 1: ₹3000/₹4300)</span>
+        <span className="legend-item"><span className="legend-dot" style={{ background: '#991b1b' }} /> Weekly Absent: ₹1200, Monthly Absent: ₹400</span>
+        <span className="legend-item"><span className="legend-dot" style={{ background: '#92400e' }} /> Weekly Substitute: ₹1000, Monthly Substitute: ₹200</span>
       </section>
 
       <div className="table-wrap">
@@ -985,6 +1248,7 @@ function DashboardPage(props) {
                 </th>
               ))}
               <th rowSpan={2}>Total Payable</th>
+              <th rowSpan={2}>Due</th>
               <th rowSpan={2}>Total Paid</th>
             </tr>
             <tr>
@@ -1000,7 +1264,7 @@ function DashboardPage(props) {
           <tbody>
             {displayedMemberIndexes.length === 0 && (
               <tr>
-                <td colSpan={5 + visibleFridays.length * 3} className="empty-state">
+                <td colSpan={6 + visibleFridays.length * 3} className="empty-state">
                   No members match the selected filters.
                 </td>
               </tr>
@@ -1078,6 +1342,7 @@ function DashboardPage(props) {
                     )
                   })}
                   <td className="total-cell">Rs. {rowTotals[memberIndex].toLocaleString('en-IN')}</td>
+                  <td className="total-cell">Rs. {Math.max(0, rowTotals[memberIndex] - rowPaidTotals[memberIndex]).toLocaleString('en-IN')}</td>
                   <td className="paid-total-cell">Rs. {rowPaidTotals[memberIndex].toLocaleString('en-IN')}</td>
                 </tr>
               )
@@ -1093,6 +1358,7 @@ function DashboardPage(props) {
                 <td key={`p-${friday.year}-${friday.month}-${friday.index}`}></td>,
               ])}
               <td>Rs. {visibleGrandTotal.toLocaleString('en-IN')}</td>
+              <td>Rs. {Math.max(0, visibleGrandTotal - visiblePaidTotal).toLocaleString('en-IN')}</td>
               <td>Rs. {visiblePaidTotal.toLocaleString('en-IN')}</td>
             </tr>
           </tbody>
@@ -1191,6 +1457,9 @@ function MembersPage(props) {
 
 function VisitorsPage(props) {
   const {
+    year,
+    month,
+    members,
     visitors,
     visitorForm,
     visitorError,
@@ -1198,10 +1467,23 @@ function VisitorsPage(props) {
     addVisitor,
     updateVisitor,
     removeVisitor,
+    exportVisitorsExcel,
   } = props
 
   const total = visitors.reduce((sum, visitor) => sum + (Number(visitor.amount) || 0), 0)
   const paidTotal = visitors.reduce((sum, visitor) => sum + (visitor.paid ? Number(visitor.amount) || 0 : 0), 0)
+
+  // Get all Fridays for current and next month
+  const allFridays = useMemo(() => {
+    const fridays = []
+    // Add current month
+    getFridays(year, month).forEach((d) => fridays.push(d))
+    // Add next month
+    const nextMonth = month === 11 ? 0 : month + 1
+    const nextYear = month === 11 ? year + 1 : year
+    getFridays(nextYear, nextYear).forEach((d) => fridays.push(d))
+    return fridays
+  }, [year, month])
 
   return (
     <>
@@ -1210,11 +1492,14 @@ function VisitorsPage(props) {
           <h1 className="page-title">Visitors</h1>
           <p className="page-copy">Track visitor payments separately from chapter member records.</p>
         </div>
-        <div className="badge ok">Paid Rs. {paidTotal.toLocaleString('en-IN')} of Rs. {total.toLocaleString('en-IN')}</div>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div className="badge ok">Paid Rs. {paidTotal.toLocaleString('en-IN')} of Rs. {total.toLocaleString('en-IN')}</div>
+          <button className="primary-btn" onClick={exportVisitorsExcel}>Download Visitors Excel</button>
+        </div>
       </div>
 
       <section className="panel">
-        <div className="form-grid visitor-form-grid">
+        <div className="form-grid visitor-form-grid" style={{ gridTemplateColumns: 'minmax(220px, 1fr) 150px minmax(200px, 1fr) 120px 130px 90px auto' }}>
           <div className="field" style={{ marginBottom: 0 }}>
             <label htmlFor="visitor-name">Visitor Name</label>
             <input
@@ -1224,6 +1509,36 @@ function VisitorsPage(props) {
               onChange={(event) => setVisitorForm((prev) => ({ ...prev, name: event.target.value }))}
               placeholder="Enter visitor name"
             />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label htmlFor="visitor-friday">Friday</label>
+            <select
+              id="visitor-friday"
+              className="select"
+              value={visitorForm.friday}
+              onChange={(event) => setVisitorForm((prev) => ({ ...prev, friday: event.target.value }))}
+            >
+              <option value="">Select Friday</option>
+              {allFridays.map((d) => (
+                <option key={d.toISOString()} value={d.toISOString()}>
+                  {fmtDate(d)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label htmlFor="visitor-referred">Referred By</label>
+            <select
+              id="visitor-referred"
+              className="select"
+              value={visitorForm.referredBy}
+              onChange={(event) => setVisitorForm((prev) => ({ ...prev, referredBy: event.target.value }))}
+            >
+              <option value="">Select Member</option>
+              {members.map((member) => (
+                <option key={member} value={member}>{member}</option>
+              ))}
+            </select>
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
             <label htmlFor="visitor-amount">Amount</label>
@@ -1265,12 +1580,34 @@ function VisitorsPage(props) {
           <div className="panel empty-state">No visitors have been added.</div>
         )}
         {visitors.map((visitor) => (
-          <div className="visitor-row" key={visitor.id}>
+          <div className="visitor-row" key={visitor.id} style={{ gridTemplateColumns: 'minmax(180px, 1fr) 150px minmax(200px, 1fr) 120px 130px 90px auto' }}>
             <input
               className="input"
               value={visitor.name}
               onChange={(event) => updateVisitor(visitor.id, 'name', event.target.value)}
             />
+            <select
+              className="select"
+              value={visitor.friday || ''}
+              onChange={(event) => updateVisitor(visitor.id, 'friday', event.target.value)}
+            >
+              <option value="">Select Friday</option>
+              {allFridays.map((d) => (
+                <option key={d.toISOString()} value={d.toISOString()}>
+                  {fmtDate(d)}
+                </option>
+              ))}
+            </select>
+            <select
+              className="select"
+              value={visitor.referredBy || ''}
+              onChange={(event) => updateVisitor(visitor.id, 'referredBy', event.target.value)}
+            >
+              <option value="">Select Member</option>
+              {members.map((member) => (
+                <option key={member} value={member}>{member}</option>
+              ))}
+            </select>
             <input
               className="input"
               type="number"
@@ -1298,6 +1635,224 @@ function VisitorsPage(props) {
             </div>
           </div>
         ))}
+      </section>
+    </>
+  )
+}
+
+function ExpensesPage(props) {
+  const {
+    year,
+    month,
+    years,
+    setYear,
+    setMonth,
+    grandTotalPayable,
+    getExpensesFor,
+    setExpensesFor,
+    exportExpensesExcel,
+  } = props
+
+  const [weeklyRent, setWeeklyRent] = useState(0)
+  const [notablePrizes, setNotablePrizes] = useState(0)
+  const [rosterSheet, setRosterSheet] = useState(0)
+  const [showBanner, setShowBanner] = useState(false)
+  const isApplyingRef = useRef(false)
+  const timeoutRef = useRef(null)
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const current = getExpensesFor(year, month)
+    setWeeklyRent(current.weeklyRent)
+    setNotablePrizes(current.notablePrizes)
+    setRosterSheet(current.rosterSheet)
+
+    if (!isApplyingRef.current) {
+      setShowBanner(false)
+    } else {
+      isApplyingRef.current = false
+    }
+  }, [year, month, getExpensesFor])
+
+  const totalExpenses = weeklyRent + notablePrizes + rosterSheet
+  const netCollection = Math.max(0, grandTotalPayable - totalExpenses)
+
+  const applyExpenses = () => {
+    isApplyingRef.current = true
+    setExpensesFor(year, month, { weeklyRent, notablePrizes, rosterSheet })
+    setShowBanner(true)
+
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+
+    timeoutRef.current = setTimeout(() => {
+      setShowBanner(false)
+    }, 3000)
+  }
+
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Expenses</h1>
+          <p className="page-copy">Track and manage monthly expenses.</p>
+        </div>
+      </div>
+
+      <section className="toolbar" aria-label="Expense controls">
+        <div className="control compact">
+          <span className="form-label">Year</span>
+          <select className="select" value={year} onChange={(event) => setYear(Number(event.target.value))}>
+            {years.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </div>
+        <div className="control">
+          <span className="form-label">Month</span>
+          <select className="select" value={month} onChange={(event) => setMonth(Number(event.target.value))}>
+            {MONTHS.map((name, index) => <option key={name} value={index}>{name}</option>)}
+          </select>
+        </div>
+      </section>
+
+      {/* Hero Card - Net Collection */}
+      <section style={{ marginBottom: '16px' }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+          borderRadius: '12px',
+          padding: '32px',
+          textAlign: 'center',
+          color: 'white',
+          boxShadow: '0 10px 25px rgba(16, 185, 129, 0.25)'
+        }}>
+          <div style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px', fontWeight: 'bold', opacity: 0.9 }}>
+            Net Collection
+          </div>
+          <div style={{ fontSize: '3rem', fontWeight: '800', lineHeight: '1' }}>
+            ₹{netCollection.toLocaleString('en-IN')}
+          </div>
+        </div>
+      </section>
+
+      {/* Financial Summary Cards */}
+      <section className="summary-grid" aria-label="Financial summary">
+        <div className="summary-card">
+          <div className="summary-label">Grand Total Payable</div>
+          <div className="summary-value">₹{grandTotalPayable.toLocaleString('en-IN')}</div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Total Expenses</div>
+          <div className="summary-value warning">₹{totalExpenses.toLocaleString('en-IN')}</div>
+        </div>
+      </section>
+
+      {/* Expense Breakdown Card */}
+      <section className="panel">
+        <h2 className="panel-title" style={{ marginBottom: '20px' }}>Expense Breakdown</h2>
+        
+        <div style={{ display: 'grid', gap: '16px', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ minWidth: '120px', fontWeight: '700', color: '#627083' }}>Weekly Rent</label>
+            <span style={{ fontSize: '1.1rem', fontWeight: '700', marginRight: '8px' }}>₹</span>
+            <input
+              id="weekly-rent"
+              className="input"
+              type="number"
+              value={weeklyRent}
+              onChange={(event) => setWeeklyRent(Number(event.target.value))}
+              style={{ maxWidth: '200px' }}
+            />
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ minWidth: '120px', fontWeight: '700', color: '#627083' }}>Notable Prizes</label>
+            <span style={{ fontSize: '1.1rem', fontWeight: '700', marginRight: '8px' }}>₹</span>
+            <input
+              id="notable-prizes"
+              className="input"
+              type="number"
+              value={notablePrizes}
+              onChange={(event) => setNotablePrizes(Number(event.target.value))}
+              style={{ maxWidth: '200px' }}
+            />
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ minWidth: '120px', fontWeight: '700', color: '#627083' }}>Roster Sheet</label>
+            <span style={{ fontSize: '1.1rem', fontWeight: '700', marginRight: '8px' }}>₹</span>
+            <input
+              id="roster-sheet"
+              className="input"
+              type="number"
+              value={rosterSheet}
+              onChange={(event) => setRosterSheet(Number(event.target.value))}
+              style={{ maxWidth: '200px' }}
+            />
+          </div>
+        </div>
+
+        {/* Calculation Preview */}
+        <div style={{
+          background: '#f9fbfd',
+          borderRadius: '8px',
+          padding: '20px',
+          marginBottom: '20px',
+          border: '1px solid #e4eaf2'
+        }}>
+          <div style={{ display: 'grid', gap: '8px', maxWidth: '400px', margin: '0 auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700' }}>
+              <span>Grand Total Payable</span>
+              <span>₹{grandTotalPayable.toLocaleString('en-IN')}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700', color: '#991b1b' }}>
+              <span>Total Expenses</span>
+              <span>₹{totalExpenses.toLocaleString('en-IN')}</span>
+            </div>
+            <div style={{ borderTop: '2px solid #627083', marginTop: '8px', paddingTop: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '800', fontSize: '1.1rem' }}>
+                <span>Net Collection</span>
+                <span style={{ color: '#10b981' }}>₹{netCollection.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Success Banner */}
+        {showBanner && (
+          <div style={{
+            background: '#10b981',
+            color: 'white',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            marginBottom: '20px',
+            textAlign: 'center',
+            fontWeight: '700',
+            fontSize: '1.1rem'
+          }}>
+            Expenses Applied Successfully!
+          </div>
+        )}
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ flex: 1 }}></div>
+          <button className="primary-btn" onClick={applyExpenses} style={{ padding: '12px 40px', fontSize: '1.1rem' }}>
+            Apply Expenses
+          </button>
+          <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="primary-btn" onClick={exportExpensesExcel} style={{ padding: '12px 40px', fontSize: '1.1rem' }}>
+              Download Expenses Excel
+            </button>
+          </div>
+        </div>
       </section>
     </>
   )
