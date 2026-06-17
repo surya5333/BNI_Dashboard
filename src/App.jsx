@@ -266,7 +266,9 @@ const css = `
   .total-cell { min-width: 112px; font-weight: 900; color: #166534; background: #f0fdf4 !important; }
   .paid-total-cell { min-width: 100px; font-weight: 900; color: #1f5f9f; background: #eff6ff !important; }
   .mini-select { min-width: 112px; border: 1px solid #cfd8e3; border-radius: 7px; background: #ffffff; color: #172033; padding: 6px 8px; outline: none; }
-  .mini-input { width: 88px; border: 1px solid #cfd8e3; border-radius: 7px; background: #ffffff; color: #172033; padding: 6px 8px; text-align: right; outline: none; font-weight: 800; }
+  .mini-input { width: 88px; border: 1px solid #cfd8e3; border-radius: 7px; background: #ffffff; color: #172033; padding: 6px 8px; text-align: right; outline: none; font-weight: 800; -moz-appearance: textfield; }
+  .mini-input::-webkit-outer-spin-button,
+  .mini-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .payment-cell { display: grid; gap: 8px; justify-items: start; min-width: 126px; }
   .paid-check { display: inline-flex; align-items: center; gap: 7px; color: #344154; font-size: 0.8rem; font-weight: 800; }
   .paid-check input { width: 15px; height: 15px; }
@@ -1314,7 +1316,7 @@ function DashboardPage(props) {
                             className="mini-input"
                             type="number"
                             value={entry.amount}
-                            onChange={(event) => updateFridayField(memberIndex, friday, 'amount', Number(event.target.value))}
+                            readOnly
                             style={{ color: config.color }}
                           />
                         </td>
