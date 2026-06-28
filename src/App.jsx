@@ -1655,9 +1655,9 @@ function ExpensesPage(props) {
     exportExpensesExcel,
   } = props
 
-  const [weeklyRent, setWeeklyRent] = useState(0)
-  const [notablePrizes, setNotablePrizes] = useState(0)
-  const [rosterSheet, setRosterSheet] = useState(0)
+  const [weeklyRent, setWeeklyRent] = useState('')
+  const [notablePrizes, setNotablePrizes] = useState('')
+  const [rosterSheet, setRosterSheet] = useState('')
   const [showBanner, setShowBanner] = useState(false)
   const isApplyingRef = useRef(false)
   const timeoutRef = useRef(null)
@@ -1673,9 +1673,9 @@ function ExpensesPage(props) {
 
   useEffect(() => {
     const current = getExpensesFor(year, month)
-    setWeeklyRent(current.weeklyRent)
-    setNotablePrizes(current.notablePrizes)
-    setRosterSheet(current.rosterSheet)
+    setWeeklyRent(current.weeklyRent > 0 ? current.weeklyRent.toString() : '')
+    setNotablePrizes(current.notablePrizes > 0 ? current.notablePrizes.toString() : '')
+    setRosterSheet(current.rosterSheet > 0 ? current.rosterSheet.toString() : '')
 
     if (!isApplyingRef.current) {
       setShowBanner(false)
@@ -1684,12 +1684,16 @@ function ExpensesPage(props) {
     }
   }, [year, month, getExpensesFor])
 
-  const totalExpenses = weeklyRent + notablePrizes + rosterSheet
+  const totalExpenses = (Number(weeklyRent) || 0) + (Number(notablePrizes) || 0) + (Number(rosterSheet) || 0)
   const netCollection = memberCollection - totalExpenses
 
   const applyExpenses = () => {
     isApplyingRef.current = true
-    setExpensesFor(year, month, { weeklyRent, notablePrizes, rosterSheet })
+    setExpensesFor(year, month, { 
+      weeklyRent: Number(weeklyRent) || 0, 
+      notablePrizes: Number(notablePrizes) || 0, 
+      rosterSheet: Number(rosterSheet) || 0 
+    })
     setShowBanner(true)
 
     if (timeoutRef.current) {
@@ -1769,7 +1773,7 @@ function ExpensesPage(props) {
               className="input"
               type="number"
               value={weeklyRent}
-              onChange={(event) => setWeeklyRent(Number(event.target.value))}
+              onChange={(event) => setWeeklyRent(event.target.value)}
               style={{ maxWidth: '200px' }}
             />
           </div>
@@ -1782,7 +1786,7 @@ function ExpensesPage(props) {
               className="input"
               type="number"
               value={notablePrizes}
-              onChange={(event) => setNotablePrizes(Number(event.target.value))}
+              onChange={(event) => setNotablePrizes(event.target.value)}
               style={{ maxWidth: '200px' }}
             />
           </div>
@@ -1795,7 +1799,7 @@ function ExpensesPage(props) {
               className="input"
               type="number"
               value={rosterSheet}
-              onChange={(event) => setRosterSheet(Number(event.target.value))}
+              onChange={(event) => setRosterSheet(event.target.value)}
               style={{ maxWidth: '200px' }}
             />
           </div>
