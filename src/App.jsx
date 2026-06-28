@@ -590,7 +590,7 @@ export default function App() {
 
     const currentExpenses = getExpensesFor(year, month)
     const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
-    const netCollection = Math.max(0, memberCollection - totalExpenses)
+    const netCollection = memberCollection - totalExpenses
 
     return {
       totalMembersPaid,
@@ -718,7 +718,7 @@ export default function App() {
     // Sheet 3: Expenses
     const currentExpenses = getExpensesFor(year, month)
     const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
-    const netCollection = Math.max(0, summaryStats.memberCollection - totalExpenses)
+    const netCollection = summaryStats.memberCollection - totalExpenses
 
     const expensesRows = [
       ['Year', 'Month', 'Members Collection', 'Weekly Rent', 'Notable Prizes', 'Roster Sheet', 'Total Expenses', 'Net Collection'],
@@ -787,7 +787,7 @@ export default function App() {
   const exportExpensesExcel = () => {
     const currentExpenses = getExpensesFor(year, month)
     const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
-    const netCollection = Math.max(0, summaryStats.memberCollection - totalExpenses)
+    const netCollection = summaryStats.memberCollection - totalExpenses
 
     const wb = XLSX.utils.book_new()
     const rows = [
@@ -1685,7 +1685,7 @@ function ExpensesPage(props) {
   }, [year, month, getExpensesFor])
 
   const totalExpenses = weeklyRent + notablePrizes + rosterSheet
-  const netCollection = Math.max(0, memberCollection - totalExpenses)
+  const netCollection = memberCollection - totalExpenses
 
   const applyExpenses = () => {
     isApplyingRef.current = true
