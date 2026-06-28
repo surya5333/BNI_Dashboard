@@ -590,7 +590,7 @@ export default function App() {
 
     const currentExpenses = getExpensesFor(year, month)
     const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
-    const netCollection = Math.max(0, grandTotalPayable - totalExpenses)
+    const netCollection = Math.max(0, memberCollection - totalExpenses)
 
     return {
       totalMembersPaid,
@@ -718,14 +718,14 @@ export default function App() {
     // Sheet 3: Expenses
     const currentExpenses = getExpensesFor(year, month)
     const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
-    const netCollection = Math.max(0, summaryStats.grandTotalPayable - totalExpenses)
+    const netCollection = Math.max(0, summaryStats.memberCollection - totalExpenses)
 
     const expensesRows = [
-      ['Year', 'Month', 'Grand Total Payable', 'Weekly Rent', 'Notable Prizes', 'Roster Sheet', 'Total Expenses', 'Net Collection'],
+      ['Year', 'Month', 'Members Collection', 'Weekly Rent', 'Notable Prizes', 'Roster Sheet', 'Total Expenses', 'Net Collection'],
       [
         year,
         MONTHS[month],
-        summaryStats.grandTotalPayable,
+        summaryStats.memberCollection,
         currentExpenses.weeklyRent,
         currentExpenses.notablePrizes,
         currentExpenses.rosterSheet,
@@ -787,15 +787,15 @@ export default function App() {
   const exportExpensesExcel = () => {
     const currentExpenses = getExpensesFor(year, month)
     const totalExpenses = currentExpenses.weeklyRent + currentExpenses.notablePrizes + currentExpenses.rosterSheet
-    const netCollection = Math.max(0, summaryStats.grandTotalPayable - totalExpenses)
+    const netCollection = Math.max(0, summaryStats.memberCollection - totalExpenses)
 
     const wb = XLSX.utils.book_new()
     const rows = [
-      ['Year', 'Month', 'Grand Total Payable', 'Weekly Rent', 'Notable Prizes', 'Roster Sheet', 'Total Expenses', 'Net Collection'],
+      ['Year', 'Month', 'Members Collection', 'Weekly Rent', 'Notable Prizes', 'Roster Sheet', 'Total Expenses', 'Net Collection'],
       [
         year,
         MONTHS[month],
-        summaryStats.grandTotalPayable,
+        summaryStats.memberCollection,
         currentExpenses.weeklyRent,
         currentExpenses.notablePrizes,
         currentExpenses.rosterSheet,
@@ -1062,7 +1062,7 @@ export default function App() {
               years={years}
               setYear={setYear}
               setMonth={setMonth}
-              grandTotalPayable={summaryStats.grandTotalPayable}
+              memberCollection={summaryStats.memberCollection}
               getExpensesFor={getExpensesFor}
               setExpensesFor={setExpensesFor}
               exportExpensesExcel={exportExpensesExcel}
@@ -1649,7 +1649,7 @@ function ExpensesPage(props) {
     years,
     setYear,
     setMonth,
-    grandTotalPayable,
+    memberCollection,
     getExpensesFor,
     setExpensesFor,
     exportExpensesExcel,
@@ -1685,7 +1685,7 @@ function ExpensesPage(props) {
   }, [year, month, getExpensesFor])
 
   const totalExpenses = weeklyRent + notablePrizes + rosterSheet
-  const netCollection = Math.max(0, grandTotalPayable - totalExpenses)
+  const netCollection = Math.max(0, memberCollection - totalExpenses)
 
   const applyExpenses = () => {
     isApplyingRef.current = true
@@ -1747,8 +1747,8 @@ function ExpensesPage(props) {
       {/* Financial Summary Cards */}
       <section className="summary-grid" aria-label="Financial summary">
         <div className="summary-card">
-          <div className="summary-label">Grand Total Payable</div>
-          <div className="summary-value">₹{grandTotalPayable.toLocaleString('en-IN')}</div>
+          <div className="summary-label">Members Collection</div>
+          <div className="summary-value">₹{memberCollection.toLocaleString('en-IN')}</div>
         </div>
         <div className="summary-card">
           <div className="summary-label">Total Expenses</div>
@@ -1811,8 +1811,8 @@ function ExpensesPage(props) {
         }}>
           <div style={{ display: 'grid', gap: '8px', maxWidth: '400px', margin: '0 auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700' }}>
-              <span>Grand Total Payable</span>
-              <span>₹{grandTotalPayable.toLocaleString('en-IN')}</span>
+              <span>Members Collection</span>
+              <span>₹{memberCollection.toLocaleString('en-IN')}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700', color: '#991b1b' }}>
               <span>Total Expenses</span>
