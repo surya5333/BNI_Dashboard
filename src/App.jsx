@@ -296,6 +296,7 @@ const css = `
     .nav { justify-content: flex-start; }
     .main { padding: 16px 10px 60px; }
     .page-head, .rent-panel { align-items: stretch; flex-direction: column; }
+    .page-head > div:last-child { display: flex; gap: 12px; flex-wrap: wrap; }
     .rent-fields { margin-left: 0; }
     .form-grid, .visitor-form-grid, .member-row, .visitor-row { grid-template-columns: 1fr; }
     .avatar { display: none; }
@@ -306,6 +307,8 @@ const css = `
     .summary-grid { grid-template-columns: 1fr; }
     .quick-actions { width: 100%; }
     .quick-actions .muted-btn { flex: 1; }
+    .visitor-form-grid label { margin-bottom: 6px; display: block; }
+    .visitor-form-grid .paid-check { margin-top: 6px; align-self: flex-start; }
   }
 `
 
