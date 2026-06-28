@@ -278,7 +278,7 @@ const css = `
   .empty-state { padding: 32px; color: #627083; text-align: center; }
 
   .form-grid { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 12px; align-items: end; }
-  .visitor-form-grid { grid-template-columns: minmax(220px, 1fr) 120px 130px 90px auto; }
+  .visitor-form-grid { display: grid; grid-template-columns: minmax(220px, 1fr) 120px 130px 90px auto; gap: 12px; align-items: end; }
   .management-list { display: grid; gap: 10px; }
   .member-row, .visitor-row { display: grid; grid-template-columns: 48px minmax(180px, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid #d9e0ea; border-radius: 9px; background: #ffffff; }
   .avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 999px; background: #e8eef7; color: #315a94; font-weight: 900; font-size: 0.8rem; }
@@ -300,7 +300,7 @@ const css = `
     .page-head > div:last-child .primary-btn,
     .page-head > div:last-child .badge { width: 100%; }
     .rent-fields { margin-left: 0; }
-    .form-grid, .visitor-form-grid, .member-row, .visitor-row { grid-template-columns: 1fr; }
+    .form-grid, .visitor-form-grid, .member-row, .visitor-row { grid-template-columns: 1fr !important; }
     .avatar { display: none; }
     .row-actions { justify-content: flex-start; }
     .segmented { width: 100%; }
